@@ -67,9 +67,9 @@ const MERRILL_CLASSROOM = leaflet.latLng({
     lng: - 122.0533
 });
 
-const GAMEPLAY_ZOOM_LEVEL = 19;
+const GAMEPLAY_ZOOM_LEVEL = 18.25;
 const TILE_DEGREES = 1e-4;
-const NEIGHBORHOOD_SIZE = 8;
+const NEIGHBORHOOD_SIZE = 15;
 const PIT_SPAWN_PROBABILITY = 0.1;
 
 const PLAYER_DATA_KEY = "player_data";
@@ -252,6 +252,7 @@ function getNeighborhood() {
     board.clearKnownCaches();
     for (let i = -NEIGHBORHOOD_SIZE; i < NEIGHBORHOOD_SIZE; i++) {
         for (let j = - NEIGHBORHOOD_SIZE; j < NEIGHBORHOOD_SIZE; j++) {
+            if (Math.pow(i, 2) + Math.pow(j, 2) > Math.pow(NEIGHBORHOOD_SIZE, 2)) continue;
             const globalPos: Point = addPoints(player.position, { i, j });
             if (luck([globalPos.i, globalPos.j].toString()) < PIT_SPAWN_PROBABILITY) {
                 neighborhoodRects.push(makeCacheRect(globalPos));
