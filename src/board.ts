@@ -4,25 +4,35 @@ export interface Point{
     i: number;
     j: number;
 }
+function pointToString(point: Point) {
+    return point.i + ":" + point.j;
+}
 
 export interface Geocoin {
     origin: Point
     id: number
 }
 
-export class Geocache {
+interface Memento<T> {
+    toMemento(): T
+    fromMemento(memento: T): void
+}
+
+export class Geocache implements Memento<string> {
     position: Point;
     coins: Geocoin[];
 
-    constructor(position: Point) {
+    constructor(position: Point, memento: string | null = null) {
         this.position = position;
         this.coins = [];
-
-        const numCoins = Math.floor(luck([position.i, position.j, "initialValue"].toString()) * 10);
-        for (let i = 0; i < numCoins; i++) {
-            this.coins.push({ origin: position, id: i });
+        if (memento == null) {
+            const numCoins = Math.floor(luck([position.i, position.j, "initialValue"].toString()) * 10);
+            for (let i = 0; i < numCoins; i++) {
+                this.coins.push({ origin: position, id: i });
+            }
+        } else {
+            this.fromMemento(memento);
         }
-
     }
     getNumCoins(): number {
         return this.coins.length;
@@ -44,21 +54,43 @@ export class Geocache {
     static getCoinString(coin: Geocoin): string {
         return "(" + coin.origin.i + ", " + coin.origin.j + ")#" + coin.id;
     }
+
+    toMemento(): string {
+        return JSON.stringify(this.coins);
+    }
+    fromMemento(memento: string): void {
+        this.coins = JSON.parse(memento) as Geocoin[];
+
+    }
 }
 
 export class Board {
 
-    knownCaches: Map<Point, Geocache>;
+    geocacheMementos: Map<string, string>;
+    knownCaches: Map<string, Geocache>;
 
     constructor() {
-        this.knownCaches = new Map<Point, Geocache>();
+        this.knownCaches = new Map<string, Geocache>();
+        this.geocacheMementos = new Map<string, string>();
+    }
+
+    clearKnownCaches() {
+        this.knownCaches.forEach(geocache => {
+            this.geocacheMementos.set(pointToString(geocache.position), geocache.toMemento());
+        });
+        this.knownCaches.clear();
     }
 
     getGeocacheAt(position: Point): Geocache {
-        if (!this.knownCaches.has(position)) {
-            this.knownCaches.set(position, new Geocache(position));
+        const positionString: string = pointToString(position);
+        if (!this.knownCaches.has(positionString)) {
+            let memento: string | null = null;
+            if (this.geocacheMementos.has(positionString)) {
+                memento = this.geocacheMementos.get(positionString)!;
+            }
+            this.knownCaches.set(positionString, new Geocache(position, memento));
         }
-        return this.knownCaches.get(position)!;
+        return this.knownCaches.get(positionString)!;
     }
 
 }

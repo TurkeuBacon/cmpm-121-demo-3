@@ -1,6 +1,6 @@
 import "leaflet/dist/leaflet.css";
 import "./style.css";
-import leaflet, { LatLng, Marker } from "leaflet";
+import leaflet, { LatLng, Layer, Marker } from "leaflet";
 import luck from "./luck";
 import "./leafletWorkaround";
 import { Board, Point, Geocache, Geocoin } from "./board.ts";
@@ -29,6 +29,10 @@ class Player {
             return null;
         }
     }
+    move(dir: Point) {
+        this.position = addPoints(this.position, dir);
+        this.marker.setLatLng(pointToLatLng(this.position));
+    }
 }
 
 const MERRILL_CLASSROOM = leaflet.latLng({
@@ -53,6 +57,7 @@ const map = leaflet.map(mapContainer, {
 });
 
 const board: Board = new Board();
+let neighborhoodRects: Layer[] = [];
 
 const player: Player = getPlayer(MERRILL_CLASSROOM);
 
@@ -71,7 +76,7 @@ function getPlayer(startingLatLng: LatLng) {
     return new Player(latLngToPoint(startingLatLng), playerMarker);
 }
 
-function makeCacheRect(position: Point) {
+function makeCacheRect(position: Point): Layer {
     const bounds = leaflet.latLngBounds([
         [position.i * TILE_DEGREES,
         position.j * TILE_DEGREES],
@@ -79,7 +84,7 @@ function makeCacheRect(position: Point) {
         (position.j + 1) * TILE_DEGREES],
     ]);
 
-    const geocacheRect = leaflet.rectangle(bounds) as leaflet.Layer;
+    const geocacheRect = leaflet.rectangle(bounds) as Layer;
     const geocache = board.getGeocacheAt(position);
 
     geocacheRect.bindPopup(() => {
@@ -123,18 +128,51 @@ function makeCacheRect(position: Point) {
         return container;
     });
     geocacheRect.addTo(map);
+    return geocacheRect;
 }
 
-for (let i = -NEIGHBORHOOD_SIZE; i < NEIGHBORHOOD_SIZE; i++) {
-    for (let j = - NEIGHBORHOOD_SIZE; j < NEIGHBORHOOD_SIZE; j++) {
-        if (luck([i, j].toString()) < PIT_SPAWN_PROBABILITY) {
-            makeCacheRect(addPoints(player.position, { i, j }));
+document.getElementById("north")!.addEventListener("click", () => {
+    movePlayer({ i: 1, j: 0 });
+});
+document.getElementById("east")!.addEventListener("click", () => {
+    movePlayer({ i: 0, j: 1 });
+});
+document.getElementById("south")!.addEventListener("click", () => {
+    movePlayer({ i: -1, j: 0 });
+});
+document.getElementById("west")!.addEventListener("click", () => {
+    movePlayer({ i: 0, j: -1 });
+});
+
+getNeighborhood();
+
+function movePlayer(dir: Point) {
+    player.move(dir);
+    map.panTo(pointToLatLng(player.position));
+    getNeighborhood();
+}
+
+function getNeighborhood() {
+    neighborhoodRects.forEach(rect => {
+        rect.remove();
+    });
+    neighborhoodRects = [];
+    board.clearKnownCaches();
+    for (let i = -NEIGHBORHOOD_SIZE; i < NEIGHBORHOOD_SIZE; i++) {
+        for (let j = - NEIGHBORHOOD_SIZE; j < NEIGHBORHOOD_SIZE; j++) {
+            const globalPos: Point = addPoints(player.position, { i, j });
+            if (luck([globalPos.i, globalPos.j].toString()) < PIT_SPAWN_PROBABILITY) {
+                neighborhoodRects.push(makeCacheRect(globalPos));
+            }
         }
     }
 }
 
-function latLngToPoint(latLng: LatLng):Point {
+function latLngToPoint(latLng: LatLng): Point {
     return { i: Math.round(latLng.lat / TILE_DEGREES), j: Math.round(latLng.lng / TILE_DEGREES) };
+}
+function pointToLatLng(point: Point): LatLng {
+    return leaflet.latLng({ lat: point.i * TILE_DEGREES, lng: point.j * TILE_DEGREES });
 }
 
 function addPoints(a: Point, b: Point): Point {
