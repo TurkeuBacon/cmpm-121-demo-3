@@ -13,7 +13,7 @@ export interface Geocoin {
     id: number
 }
 
-interface Memento<T> {
+export interface Memento<T> {
     toMemento(): T
     fromMemento(memento: T): void
 }
@@ -64,14 +64,17 @@ export class Geocache implements Memento<string> {
     }
 }
 
-export class Board {
+export class Board implements Memento<string>{
 
     geocacheMementos: Map<string, string>;
     knownCaches: Map<string, Geocache>;
 
-    constructor() {
+    constructor(memento: string | null = null) {
         this.knownCaches = new Map<string, Geocache>();
         this.geocacheMementos = new Map<string, string>();
+        if (memento != null) {
+            this.fromMemento(memento);
+        }
     }
 
     clearKnownCaches() {
@@ -93,4 +96,16 @@ export class Board {
         return this.knownCaches.get(positionString)!;
     }
 
+    reset() {
+        this.knownCaches = new Map<string, Geocache>();
+        this.geocacheMementos = new Map<string, string>();
+    }
+
+    toMemento(): string {
+        return JSON.stringify(Array.from(this.geocacheMementos));
+    }
+    fromMemento(memento: string): void {
+        const mementosArray = JSON.parse(memento) as [string, string][];
+        this.geocacheMementos = new Map<string, string>(mementosArray);
+    }
 }
