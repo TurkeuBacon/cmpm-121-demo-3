@@ -1,19 +1,24 @@
 import "leaflet/dist/leaflet.css";
 import "./style.css";
-import leaflet, { LatLng, Layer, Marker } from "leaflet";
+import leaflet, { LatLng, Layer, Marker, Polyline } from "leaflet";
 import luck from "./luck";
 import "./leafletWorkaround";
-import { Board, Point, Geocache, Geocoin } from "./board.ts";
+import { Board, Point, Geocache, Geocoin, Memento } from "./board.ts";
 
-class Player {
+class Player implements Memento<string>{
     position: Point;
     marker: Marker;
     coins: Geocoin[];
+    locationHistory: LatLng[];
 
-    constructor(position: Point, marker: Marker) {
+    constructor(position: Point, marker: Marker, memento: string | null = null) {
         this.position = position;
         this.marker = marker;
         this.coins = [];
+        this.locationHistory = [pointToLatLng(this.position)];
+        if (memento != null) {
+            this.fromMemento(memento);
+        }
     }
 
     getNumCoins(): number {
@@ -29,9 +34,31 @@ class Player {
             return null;
         }
     }
-    move(dir: Point) {
-        this.position = addPoints(this.position, dir);
+    setPosition(position: Point) {
+        this.position = position;
         this.marker.setLatLng(pointToLatLng(this.position));
+        this.locationHistory.push(pointToLatLng(this.position));
+    }
+    clearCoins() {
+        this.coins = [];
+    }
+
+    toMemento(): string {
+        return JSON.stringify({
+            position: this.position,
+            locationHistory: this.locationHistory,
+            coins: this.coins
+        });
+    }
+    fromMemento(memento: string): void {
+        const mementoObj = JSON.parse(memento) as {
+            position: Point
+            locationHistory: LatLng[]
+            coins: Geocoin[]
+        };
+        this.setPosition(mementoObj.position);
+        this.locationHistory = mementoObj.locationHistory;
+        this.coins = mementoObj.coins;
     }
 }
 
@@ -45,21 +72,30 @@ const TILE_DEGREES = 1e-4;
 const NEIGHBORHOOD_SIZE = 8;
 const PIT_SPAWN_PROBABILITY = 0.1;
 
+const PLAYER_DATA_KEY = "player_data";
+const BOARD_DATA_KEY = "board_data";
+
 const mapContainer = document.querySelector<HTMLElement>("#map")!;
 
 const map = leaflet.map(mapContainer, {
     center: MERRILL_CLASSROOM,
     zoom: GAMEPLAY_ZOOM_LEVEL,
-    minZoom: GAMEPLAY_ZOOM_LEVEL,
-    maxZoom: GAMEPLAY_ZOOM_LEVEL,
     zoomControl: false,
     scrollWheelZoom: false
 });
 
-const board: Board = new Board();
+const boardMemento: string | null = localStorage.getItem(BOARD_DATA_KEY);
+
+const board: Board = new Board(boardMemento);
 let neighborhoodRects: Layer[] = [];
 
 const player: Player = getPlayer(MERRILL_CLASSROOM);
+let polyline: Polyline | null;
+let geolocationWatcherId: number | null;
+map.panTo(pointToLatLng(player.position));
+getNeighborhood();
+drawPlayerHistory();
+let zoomedOut = false;
 
 leaflet.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
@@ -70,10 +106,11 @@ const statusPanel = document.querySelector<HTMLDivElement>("#statusPanel")!;
 statusPanel.innerHTML = "No coins yet...";
 
 function getPlayer(startingLatLng: LatLng) {
+    const playerMemento: string | null = localStorage.getItem(PLAYER_DATA_KEY);
     const playerMarker = leaflet.marker(startingLatLng);
     playerMarker.bindTooltip("That's you!");
     playerMarker.addTo(map);
-    return new Player(latLngToPoint(startingLatLng), playerMarker);
+    return new Player(latLngToPoint(startingLatLng), playerMarker, playerMemento);
 }
 
 function makeCacheRect(position: Point): Layer {
@@ -131,25 +168,80 @@ function makeCacheRect(position: Point): Layer {
     return geocacheRect;
 }
 
+document.getElementById("sensor")!.addEventListener("click", () => {
+    if (geolocationWatcherId == null) {
+        useGeolocation();
+    } else {
+        ignoreGeolocation();
+    }
+});
 document.getElementById("north")!.addEventListener("click", () => {
-    movePlayer({ i: 1, j: 0 });
+    movePlayerManual({ i: 1, j: 0 });
 });
 document.getElementById("east")!.addEventListener("click", () => {
-    movePlayer({ i: 0, j: 1 });
+    movePlayerManual({ i: 0, j: 1 });
 });
 document.getElementById("south")!.addEventListener("click", () => {
-    movePlayer({ i: -1, j: 0 });
+    movePlayerManual({ i: -1, j: 0 });
 });
 document.getElementById("west")!.addEventListener("click", () => {
-    movePlayer({ i: 0, j: -1 });
+    movePlayerManual({ i: 0, j: -1 });
+});
+document.getElementById("reset")!.addEventListener("click", () => {
+    if (confirm("Reset your game progress?")) {
+        board.reset();
+        player.clearCoins();
+        player.locationHistory = [];
+        ignoreGeolocation();
+        setPlayerPosition(latLngToPoint(MERRILL_CLASSROOM));
+        statusPanel.innerHTML = `${player.getNumCoins()} coins accumulated`;
+    }
+});
+document.getElementById("zoom")!.addEventListener("click", () => {
+    if (zoomedOut) {
+        zoomIn();
+    } else {
+        zoomOut();
+    }
 });
 
 getNeighborhood();
 
-function movePlayer(dir: Point) {
-    player.move(dir);
+function setPlayerPosition(position: Point) {
+    player.setPosition(position);
     map.panTo(pointToLatLng(player.position));
     getNeighborhood();
+    drawPlayerHistory();
+    zoomIn();
+    saveGame();
+}
+
+function movePlayerManual(delta: Point) {
+    ignoreGeolocation();
+    const newPosition = addPoints(player.position, delta);
+    setPlayerPosition(newPosition);
+}
+
+function drawPlayerHistory() {
+    if (polyline != null) {
+        polyline.remove();
+    }
+    polyline = leaflet.polyline(player.locationHistory, { color: "blue" }).addTo(map);
+}
+
+function useGeolocation() {
+    if (geolocationWatcherId != null) navigator.geolocation.clearWatch(geolocationWatcherId);
+    geolocationWatcherId = navigator.geolocation.watchPosition((position) => {
+        const newPosition: Point = latLngToPoint(leaflet.latLng({ lat: position.coords.latitude, lng: position.coords.longitude }));
+        setPlayerPosition(newPosition);
+    });
+}
+function ignoreGeolocation() {
+    if (geolocationWatcherId == null) {
+        return;
+    }
+    navigator.geolocation.clearWatch(geolocationWatcherId);
+    geolocationWatcherId = null;
 }
 
 function getNeighborhood() {
@@ -166,6 +258,24 @@ function getNeighborhood() {
             }
         }
     }
+}
+function zoomOut() {
+    if (zoomedOut) return;
+    if (polyline != null) {
+        zoomedOut = true;
+        map.fitBounds(polyline.getBounds(), {duration: .125});
+    }
+}
+
+function zoomIn() {
+    if (!zoomedOut) return;
+    zoomedOut = false;
+    map.flyTo(pointToLatLng(player.position), GAMEPLAY_ZOOM_LEVEL, {duration: .125});
+}
+
+function saveGame() {
+    localStorage.setItem(PLAYER_DATA_KEY, player.toMemento());
+    localStorage.setItem(BOARD_DATA_KEY, board.toMemento());
 }
 
 function latLngToPoint(latLng: LatLng): Point {
